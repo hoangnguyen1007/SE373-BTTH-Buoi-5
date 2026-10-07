@@ -1,21 +1,20 @@
-"""csv-quality script: thống kê fixture, lỗi input/schema/parse exit 1, lỗi dữ liệu exit 0."""
-
+from pathlib import Path
 import json
 import subprocess
 import sys
 
 import pytest
 
-import paths
-
-SCRIPT = paths.FIXTURES_DIR / "skills" / "csv-quality" / "scripts" / "check_csv.py"
+BASE_DIR = Path(__file__).resolve().parent.parent
+SCRIPT = BASE_DIR / "skills" / "csv-quality" / "scripts" / "check_csv.py"
+DATA_DIR = BASE_DIR / "data"
 
 
 def run(path, max_hours=8.0):
     cmd = [sys.executable, str(SCRIPT), "--input", str(path)]
     if max_hours is not None:
         cmd.extend(["--max-hours", str(max_hours)])
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
 
 
 def write_csv(tmp_path, text):
@@ -25,7 +24,7 @@ def write_csv(tmp_path, text):
 
 
 def test_fixture_statistics():
-    result = run(paths.FIXTURES_DIR / "data" / "tasks.csv")
+    result = run(DATA_DIR / "tasks.csv")
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert data["row_count"] == 6
@@ -74,7 +73,7 @@ def test_parse_error_exit_1(tmp_path):
 
 
 def test_script_does_not_modify_input():
-    source = paths.FIXTURES_DIR / "data" / "tasks.csv"
+    source = DATA_DIR / "tasks.csv"
     before = source.read_bytes()
     run(source)
     assert source.read_bytes() == before
@@ -92,13 +91,15 @@ def test_invalid_max_hours_exit_nonzero(tmp_path):
         [sys.executable, str(SCRIPT), "--input", str(write_csv(tmp_path, "task_id,owner,hours\nT01,Lan,4\n")), "--max-hours", "invalid"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
     )
     assert result_nan.returncode != 0
 
 
 def test_workload_threshold_8():
-    result = run(paths.FIXTURES_DIR / "data" / "workload.csv", max_hours=8)
+    result = run(DATA_DIR / "workload.csv", max_hours=8)
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert data["hours_by_owner"] == {"Lan": 9.0, "Minh": 3.0}
@@ -111,7 +112,7 @@ def test_workload_threshold_8():
 
 
 def test_workload_threshold_9():
-    result = run(paths.FIXTURES_DIR / "data" / "workload.csv", max_hours=9)
+    result = run(DATA_DIR / "workload.csv", max_hours=9)
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert data["hours_by_owner"] == {"Lan": 9.0, "Minh": 3.0}
@@ -119,7 +120,7 @@ def test_workload_threshold_9():
 
 
 def test_edge_case_first_occurrence_invalid_hours():
-    result = run(paths.FIXTURES_DIR / "data" / "workload-edge.csv", max_hours=0)
+    result = run(DATA_DIR / "workload-edge.csv", max_hours=0)
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert data["max_hours"] == 0
@@ -129,4 +130,5 @@ def test_edge_case_first_occurrence_invalid_hours():
         {"line": 2, "task_id": "E01", "reasons": ["invalid_hours"]},
         {"line": 3, "task_id": "E01", "reasons": ["duplicate_id"]},
     ]
+
 
