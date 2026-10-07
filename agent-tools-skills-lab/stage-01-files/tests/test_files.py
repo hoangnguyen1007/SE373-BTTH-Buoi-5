@@ -5,8 +5,9 @@ import json
 import pytest
 
 from reset_workspace import WorkspaceError, ensure_workspace, reset_workspace
-from tools import read_file, write_file
-from tools.files import MAX_READ_BYTES, _read, _write
+from tools import list_files, read_file, write_file
+from tools.files import MAX_READ_BYTES, _list, _read, _write
+
 
 
 @pytest.fixture
@@ -39,7 +40,10 @@ def test_read_absolute_path_blocked(ws):
 
 def test_read_symlink_escape_blocked(ws):
     (ws.parent / "secret.txt").write_text("secret")
-    (ws / "data" / "link.txt").symlink_to(ws.parent / "secret.txt")
+    try:
+        (ws / "data" / "link.txt").symlink_to(ws.parent / "secret.txt")
+    except OSError:
+        pytest.skip("Symlink creation not permitted on this platform/user")
     result = _read(ws, "data/link.txt")
     assert result["error"]["code"] == "PATH_OUTSIDE_WORKSPACE"
     assert "content" not in result
@@ -72,17 +76,54 @@ def test_write_outside_output_rejected(ws, path):
 def test_write_absolute_and_symlink_escape_rejected(ws, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
-    (ws / "output" / "escape").symlink_to(outside, target_is_directory=True)
+    try:
+        (ws / "output" / "escape").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Symlink creation not permitted on this platform/user")
     assert _write(ws, str(ws / "output" / "a.md"), "x")["error"]["code"] == "PATH_OUTSIDE_WORKSPACE"
     assert _write(ws, "output/escape/a.md", "x")["ok"] is False
     assert list(outside.iterdir()) == []
 
 
+def test_list_files_ok_and_sorted(ws):
+    (ws / "data" / "sub_dir").mkdir()
+    (ws / "data" / "a_file.txt").write_text("a", encoding="utf-8")
+    result = _list(ws, "data")
+    assert result["ok"] is True
+    assert result["path"] == "data"
+    assert [(item["name"], item["type"], item["path"]) for item in result["entries"]] == [
+        ("a_file.txt", "file", "data/a_file.txt"),
+        ("note.md", "file", "data/note.md"),
+        ("sub_dir", "directory", "data/sub_dir"),
+    ]
+
+
+def test_list_files_not_a_directory(ws):
+    result = _list(ws, "data/note.md")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "NOT_A_DIRECTORY"
+
+
+def test_list_files_missing_directory(ws):
+    result = _list(ws, "data/non_existent_folder")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "DIRECTORY_NOT_FOUND"
+
+
+@pytest.mark.parametrize("path", ["../", "../../etc", "data/../../secret"])
+def test_list_files_outside_workspace_blocked(ws, path):
+    result = _list(ws, path)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "PATH_OUTSIDE_WORKSPACE"
+
+
 def test_tools_return_json_against_project_workspace(lab_dirs):
     assert json.loads(read_file.invoke({"path": "data/weekly_notes.md"}))["ok"] is True
+    assert json.loads(list_files.invoke({"path": "data"}))["ok"] is True
     written = json.loads(write_file.invoke({"path": "output/t.md", "content": "ok"}))
     assert written["status"] == "created"
     assert json.loads(read_file.invoke({"path": "output/t.md"}))["content"] == "ok"
+
 
 
 def test_reset_restores_fixtures_and_requires_marker(tmp_path):
